@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title> PocketForge — Game Engine</title>
+<style>
+:root{--bg:#10141d;--panel:#191f2b;--panel2:#222b3a;--line:#303b4e;--text:#eef3fb;--muted:#9aa8bc;--blue:#62a8ff;--green:#57d6a0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden}
+header{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 13px;background:#151b26;border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:.4px}.brand span{color:var(--blue)}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;padding:10px 12px;font-weight:650;font-size:13px}
+button.primary{background:var(--blue);color:#081321;border:0}button.active{border-color:var(--blue);color:var(--blue)}
+#viewport{position:absolute;top:52px;left:0;right:0;bottom:190px;background:#101722;touch-action:none}
+#viewLabel{position:absolute;top:10px;left:12px;color:#aebbd0;font-size:11px;letter-spacing:1px;pointer-events:none}
+#hint{position:absolute;bottom:10px;left:0;right:0;text-align:center;color:#9aa8bc;font-size:11px;pointer-events:none}
+#bottom{position:absolute;bottom:0;left:0;right:0;height:190px;background:var(--panel);border-top:1px solid var(--line);padding:10px 12px env(safe-area-inset-bottom)}
+.tabs{display:flex;gap:7px;margin-bottom:9px}.tabs button{flex:1;padding:9px 4px}
+.panel{display:none}.panel.show{display:block}
+.tools{display:flex;gap:7px;overflow-x:auto;padding-bottom:7px}.tools button{white-space:nowrap}
+.row{display:flex;gap:8px;align-items:center;margin:7px 0}.row label{color:var(--muted);width:65px}.row input{min-width:0;flex:1;accent-color:var(--blue)}
+#objectList{display:flex;gap:6px;overflow-x:auto;padding:4px 0}.obj{white-space:nowrap;padding:7px 10px;font-size:12px}
+.small{font-size:11px;color:var(--muted)}#toast{position:absolute;top:60px;left:50%;transform:translateX(-50%);background:#263448;border:1px solid #40516b;border-radius:12px;padding:9px 13px;display:none;z-index:5}
+#playOverlay{position:absolute;inset:52px 0 190px;background:#0008;display:none;align-items:center;justify-content:center;pointer-events:none;font-size:22px;font-weight:800}
+</style>
+</head>
+<body>
+<header><div class="brand">⚒ <span>POCKET</span>FORGE</div><div style="display:flex;gap:7px"><button id="saveBtn">Save</button><button id="playBtn" class="primary">▶ Play</button></div></header>
+<div id="viewport"><div id="viewLabel">SCENE VIEW · 3D</div><div id="hint">Drag to orbit · Pinch to zoom · Tap an object to select</div></div>
+<div id="playOverlay">▶ PLAYING</div><div id="toast"></div>
+<div id="bottom">
+ <div class="tabs"><button class="active" data-tab="create">＋ Create</button><button data-tab="objects">▦ Objects</button><button data-tab="inspect">⚙ Inspect</button></div>
+ <section id="create" class="panel show">
+  <div class="tools"><button id="cubeBtn">＋ Cube</button><button id="sphereBtn">＋ Sphere</button><button id="floorBtn">＋ Floor</button><button id="lightBtn">☼ Light</button><button id="deleteBtn">Delete</button></div>
+  <div class="small">PocketForge prototype 0.1 · Your first mobile 3D editor</div>
+ </section>
+ <section id="objects" class="panel"><div class="small">SCENE OBJECTS — tap one to select</div><div id="objectList"></div><div class="small" id="countLabel">0 objects</div></section>
+ <section id="inspect" class="panel"><div class="small" id="selectedName">Nothing selected</div>
+  <div class="row"><label>Move X</label><input id="posX" type="range" min="-5" max="5" step=".1" value="0"><span id="xVal">0</span></div>
+  <div class="row"><label>Move Z</label><input id="posZ" type="range" min="-5" max="5" step=".1" value="0"><span id="zVal">0</span></div>
+  <div class="row"><label>Scale</label><input id="scale" type="range" min=".3" max="3" step=".1" value="1"><span id="sVal">1</span></div>
+ </section>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(()=>{
+const viewport=document.getElementById('viewport');
+if(!window.THREE){viewport.innerHTML='<p style="padding:24px">Could not load the 3D library. Connect to the internet and reopen PocketForge.</p>';return;}
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x101722);
+const camera=new THREE.PerspectiveCamera(55,1,.1,100);camera.position.set(7,7,9);camera.lookAt(0,0,0);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));viewport.appendChild(renderer.domElement);
+renderer.domElement.style.width='100%';renderer.domElement.style.height='100%';renderer.domElement.style.display='block';
+scene.add(new THREE.HemisphereLight(0xffffff,0x526078,2));
+const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(5,10,7);scene.add(sun);
+const grid=new THREE.GridHelper(30,30,0x53647c,0x293648);scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x182333,roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-.04;scene.add(ground);
+const objects=[];let selected=null,playing=false,orbit=0.78,tilt=.65,distance=11;
+const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();let down=null,dragging=false;
+function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false)}window.addEventListener('resize',resize);resize();
+function cameraUpdate(){camera.position.set(Math.sin(orbit)*distance,Math.max(2,Math.sin(tilt)*distance),Math.cos(orbit)*distance);camera.lookAt(0,0,0)}cameraUpdate();
+function add(type){
+ let geo, name;
+ if(type==='Cube'){geo=new THREE.BoxGeometry(1,1,1);name='Cube'}
+ else if(type==='Sphere'){geo=new THREE.SphereGeometry(.6,24,16);name='Sphere'}
+ else if(type==='Floor'){geo=new THREE.BoxGeometry(5,.15,5);name='Floor'}
+ else {const l=new THREE.PointLight(0xffe6b0,2,8);l.position.set(0,2,0);scene.add(l);objects.push({mesh:l,name:'Point Light',type:'Light'});select(objects[objects.length-1]);refresh();return}
+ const mat=new THREE.MeshStandardMaterial({color:type==='Floor'?0x59728f:0x62a8ff,roughness:.65});
+ const mesh=new THREE.Mesh(geo,mat);mesh.position.set((Math.random()-.5)*2,type==='Floor'?-.02:.55,(Math.random()-.5)*2);scene.add(mesh);
+ const item={mesh,name,type};objects.push(item);select(item);refresh();toast(name+' added');
+}
+function select(item){if(selected&&selected.mesh.material&&selected.mesh.material.emissive)selected.mesh.material.emissive.setHex(0x000000);selected=item;if(item&&item.mesh.material&&item.mesh.material.emissive)item.mesh.material.emissive.setHex(0x17304b);document.getElementById('selectedName').textContent=item?item.name+' selected':'Nothing selected';if(item&&item.mesh.position){['X','Z'].forEach(a=>{let v=item.mesh.position[a.toLowerCase()];document.getElementById('pos'+a).value=v;document.getElementById(a.toLowerCase()+'Val').textContent=v.toFixed(1)});let s=item.mesh.scale.x;document.getElementById('scale').value=s;document.getElementById('sVal').textContent=s.toFixed(1)}}
+function refresh(){let list=document.getElementById('objectList');list.innerHTML='';objects.forEach((o,i)=>{let b=document.createElement('button');b.className='obj'+(o===selected?' active':'');b.textContent=o.name+' '+(i+1);b.onclick=()=>select(o);list.appendChild(b)});document.getElementById('countLabel').textContent=objects.length+' objects in scene'}
+function toast(s){let t=document.getElementById('toast');t.textContent=s;t.style.display='block';clearTimeout(window._toast);window._toast=setTimeout(()=>t.style.display='none',1500)}
+document.getElementById('cubeBtn').onclick=()=>add('Cube');document.getElementById('sphereBtn').onclick=()=>add('Sphere');document.getElementById('floorBtn').onclick=()=>add('Floor');document.getElementById('lightBtn').onclick=()=>add('Light');
+document.getElementById('deleteBtn').onclick=()=>{if(!selected)return toast('Select an object first');scene.remove(selected.mesh);objects.splice(objects.indexOf(selected),1);selected=null;select(null);refresh();toast('Object deleted')};
+function slider(id,axis,label){let el=document.getElementById(id);el.oninput=()=>{if(!selected||!selected.mesh.position)return;selected.mesh.position[axis]=+el.value;document.getElementById(label).textContent=(+el.value).toFixed(1)}}slider('posX','x','xVal');slider('posZ','z','zVal');
+document.getElementById('scale').oninput=e=>{if(!selected||!selected.mesh.scale)return;let v=+e.target.value;selected.mesh.scale.set(v,v,v);document.getElementById('sVal').textContent=v.toFixed(1)};
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.panel').forEach(x=>x.classList.remove('show'));b.classList.add('active');document.getElementById(b.dataset.tab).classList.add('show')});
+function pick(e){const r=renderer.domElement.getBoundingClientRect();pointer.x=((e.clientX-r.left)/r.width)*2-1;pointer.y=-((e.clientY-r.top)/r.height)*2+1;raycaster.setFromCamera(pointer,camera);const hits=raycaster.intersectObjects(objects.map(o=>o.mesh).filter(m=>m.isMesh));if(hits.length){select(objects.find(o=>o.mesh===hits[0].object));refresh()}}
+renderer.domElement.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY,orbit,tilt};dragging=false;renderer.domElement.setPointerCapture(e.pointerId)});
+renderer.domElement.addEventListener('pointermove',e=>{if(!down||playing)return;let dx=e.clientX-down.x,dy=e.clientY-down.y;if(Math.abs(dx)+Math.abs(dy)>6)dragging=true;if(dragging){orbit=down.orbit-dx*.008;tilt=Math.max(.2,Math.min(1.35,down.tilt+dy*.006));cameraUpdate()}});
+renderer.domElement.addEventListener('pointerup',e=>{if(down&&!dragging)pick(e);down=null});
+renderer.domElement.addEventListener('wheel',e=>{distance=Math.max(4,Math.min(25,distance+e.deltaY*.01));cameraUpdate()},{passive:true});
+let playState={};document.getElementById('playBtn').onclick=()=>{playing=!playing;document.getElementById('playBtn').textContent=playing?'■ Stop':'▶ Play';document.getElementById('playOverlay').style.display=playing?'flex':'none';document.getElementById('hint').textContent=playing?'Play mode · tap Stop to return to editing':'Drag to orbit · Pinch to zoom · Tap an object to select';if(playing){selected=null;select(null)}toast(playing?'Play mode started':'Back to editor')};
+document.getElementById('saveBtn').onclick=()=>{const data=objects.filter(o=>o.mesh.isMesh).map(o=>({name:o.name,type:o.type,position:o.mesh.position.toArray(),scale:o.mesh.scale.toArray(),color:o.mesh.material.color.getHex()}));const blob=new Blob([JSON.stringify({app:'PocketForge',version:1,objects:data},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pocketforge-project.json';a.click();URL.revokeObjectURL(a.href);toast('Project file exported')};
+add('Cube');add('Floor');select(objects[0]);refresh();
+function animate(){requestAnimationFrame(animate);renderer.render(scene,camera)}animate();
+})();
+</script>
+</body></html>
